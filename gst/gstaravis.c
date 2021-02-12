@@ -262,6 +262,7 @@ gst_aravis_set_caps (GstBaseSrc *src, GstCaps *caps)
 							     3e6 / dbl_frame_rate);
 		else
 			gst_aravis->buffer_timeout_us = GST_ARAVIS_BUFFER_TIMEOUT_DEFAULT;
+
 	} else
 		gst_aravis->buffer_timeout_us = GST_ARAVIS_BUFFER_TIMEOUT_DEFAULT;
 
@@ -325,7 +326,10 @@ gst_aravis_set_caps (GstBaseSrc *src, GstCaps *caps)
 	if (!error) arv_device_set_features_from_string (arv_camera_get_device (gst_aravis->camera), gst_aravis->features, &error);
 
 	if (!error) gst_aravis->payload = arv_camera_get_payload (gst_aravis->camera, &error);
-	if (!error) gst_aravis->stream = arv_camera_create_stream (gst_aravis->camera, NULL, NULL, &error);
+	if (!error) {
+    if (orig_stream != NULL) g_object_unref (g_steal_pointer(&orig_stream));
+    gst_aravis->stream = arv_camera_create_stream (gst_aravis->camera, NULL, NULL, &error);
+  }
 	if (error)
 		goto errored;
 
@@ -352,6 +356,7 @@ gst_aravis_set_caps (GstBaseSrc *src, GstCaps *caps)
 	GST_OBJECT_UNLOCK (gst_aravis);
 
 	result = TRUE;
+	GST_LOG_OBJECT (gst_aravis, ">>>>>>>> SET CAPS SUCCESSFULLY");
 	goto unref;
 
 errored:
@@ -509,15 +514,19 @@ gst_aravis_create (GstPushSrc * push_src, GstBuffer ** buffer)
 	do {
 		if (arv_buffer) arv_stream_push_buffer (gst_aravis->stream, arv_buffer);
 		arv_buffer = arv_stream_timeout_pop_buffer (gst_aravis->stream, gst_aravis->buffer_timeout_us);
+    // GST_LOG_OBJECT (gst_aravis, ">>>>>>>> RETRIEVED %s BUFFER: %d", arv_buffer == NULL ? "NULL" : "NON NULL", arv_buffer_get_status(arv_buffer));
 	} while (arv_buffer != NULL && arv_buffer_get_status (arv_buffer) != ARV_BUFFER_STATUS_SUCCESS);
 
-	if (arv_buffer == NULL)
+	if (arv_buffer == NULL) {
+	  // GST_LOG_OBJECT (gst_aravis, ">>>>>>>> FAILED TO GET BUFFER FROM ARV");
 		goto error;
+  }
 
 	buffer_data = (char *) arv_buffer_get_data (arv_buffer, &buffer_size);
 	arv_buffer_get_image_region (arv_buffer, NULL, NULL, &width, &height);
 	arv_row_stride = width * ARV_PIXEL_FORMAT_BIT_PER_PIXEL (arv_buffer_get_image_pixel_format (arv_buffer)) / 8;
 	timestamp_ns = arv_buffer_get_timestamp (arv_buffer);
+	// GST_LOG_OBJECT (gst_aravis, ">>>>>>>> %d %d", width, ARV_PIXEL_FORMAT_BIT_PER_PIXEL (arv_buffer_get_image_pixel_format (arv_buffer)));
 
 	/* Gstreamer requires row stride to be a multiple of 4 */
 	if ((arv_row_stride & 0x3) != 0) {
@@ -537,7 +546,12 @@ gst_aravis_create (GstPushSrc * push_src, GstBuffer ** buffer)
 		*buffer = gst_buffer_new_wrapped (data, size);
 	} else {
 		// FIXME Should arv_stream_push_buffer when the GstBuffer is destroyed
-		*buffer = gst_buffer_new_wrapped_full (0, buffer_data, buffer_size, 0, buffer_size, NULL, NULL);
+		// GST_LOG_OBJECT (gst_aravis, ">>>>>>>> PASSING WITHOUT COPY!!!");
+    char *data;
+    data = g_malloc(buffer_size);
+    memcpy(data, buffer_data, buffer_size);
+    *buffer = gst_buffer_new_wrapped(data, buffer_size);
+    // *buffer = gst_buffer_new_wrapped_full (0, buffer_data, buffer_size, 0, buffer_size, NULL, NULL);
 	}
 
 	if (!base_src_does_timestamp) {
@@ -647,6 +661,7 @@ gst_aravis_finalize (GObject * object)
 	GstCaps *all_caps;
 	GstCaps *fixed_caps;
 
+	GST_LOG_OBJECT (gst_aravis, ">>>>>>>> FINALIZING");
 	GST_OBJECT_LOCK (gst_aravis);
 	camera = g_steal_pointer (&gst_aravis->camera);
 	stream = g_steal_pointer (&gst_aravis->stream);
@@ -846,6 +861,8 @@ gst_aravis_get_property (GObject * object, guint prop_id, GValue * value,
 			G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 			break;
 	}
+
+  arv_camera_uv_set_bandwidth(gst_aravis->camera, 500000000, NULL);
 }
 
 static void

@@ -35,6 +35,7 @@
 #include <arvdevice.h>
 #include <arvdebugprivate.h>
 #include <gio/gio.h>
+#include <stdio.h>
 
 enum {
 	ARV_STREAM_SIGNAL_NEW_BUFFER,
